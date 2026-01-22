@@ -1,0 +1,632 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>n8n Git Push</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Open Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f5f5f5;
+      color: #333;
+    }
+
+    #root {
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo } = React;
+
+    // Sample data structure - this would be injected by n8n
+    const SAMPLE_DATA = {
+      workflows: [
+        { id: 'wf1', name: 'Customer Onboarding Flow', updatedAt: '2024-12-23T10:30:00Z', status: 'Modified', openUrl: '/workflow/wf1' },
+        { id: 'wf2', name: 'Email Campaign Automation', updatedAt: '2024-12-20T14:20:00Z', status: 'New', openUrl: '/workflow/wf2' },
+        { id: 'wf3', name: 'Data Sync Pipeline', updatedAt: '2024-12-15T09:15:00Z', status: 'No update', openUrl: '/workflow/wf3' },
+        { id: 'wf4', name: 'Slack Notifications', updatedAt: '2024-11-28T16:45:00Z', status: 'Modified', openUrl: '/workflow/wf4' },
+      ],
+      credentials: [
+        { id: 'cr1', name: 'AWS Access Keys', updatedAt: '2024-12-22T11:00:00Z', status: 'Modified', openUrl: '/credential/cr1' },
+        { id: 'cr2', name: 'Slack Bot Token', updatedAt: '2024-12-18T13:30:00Z', status: 'New', openUrl: '/credential/cr2' },
+        { id: 'cr3', name: 'PostgreSQL Connection', updatedAt: '2024-11-25T10:00:00Z', status: 'No update', openUrl: '/credential/cr3' },
+      ]
+    };
+
+    function App() {
+      const [activeTab, setActiveTab] = useState('workflows');
+      const [selectedWorkflows, setSelectedWorkflows] = useState([]);
+      const [selectedCredentials, setSelectedCredentials] = useState([]);
+      const [timeFilter, setTimeFilter] = useState('7days');
+      const [statusFilter, setStatusFilter] = useState('all');
+      const [commitMessage, setCommitMessage] = useState('');
+      const [createMR, setCreateMR] = useState(false);
+      const [branch, setBranch] = useState('dev');
+      const [project, setProject] = useState('n8n');
+
+      // Get the appropriate selected items based on active tab
+      const selectedItems = activeTab === 'workflows' ? selectedWorkflows : selectedCredentials;
+      const setSelectedItems = activeTab === 'workflows' ? setSelectedWorkflows : setSelectedCredentials;
+
+      // Calculate date filters
+      const getFilteredItems = () => {
+        if (activeTab === 'meta') return [];
+        const items = activeTab === 'workflows' ? SAMPLE_DATA.workflows : SAMPLE_DATA.credentials;
+        const now = new Date();
+        
+        return items.filter(item => {
+          // Time filter
+          const updatedDate = new Date(item.updatedAt);
+          const daysDiff = (now - updatedDate) / (1000 * 60 * 60 * 24);
+          
+          if (timeFilter === '24hours' && daysDiff > 1) return false;
+          if (timeFilter === '7days' && daysDiff > 7) return false;
+          if (timeFilter === '30days' && daysDiff > 30) return false;
+          
+          // Status filter
+          if (statusFilter === 'new' && item.status !== 'New') return false;
+          if (statusFilter === 'modified' && item.status !== 'Modified') return false;
+          if (statusFilter === 'unchanged' && item.status !== 'No update') return false;
+          
+          return true;
+        });
+      };
+
+      const filteredItems = getFilteredItems();
+
+      const toggleItem = (id) => {
+        setSelectedItems(prev => 
+          prev.includes(id) 
+            ? prev.filter(i => i !== id)
+            : [...prev, id]
+        );
+      };
+
+      const toggleAll = () => {
+        if (selectedItems.length === filteredItems.length) {
+          setSelectedItems([]);
+        } else {
+          setSelectedItems(filteredItems.map(i => i.id));
+        }
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        // This would post to your webhook
+        const formData = {
+          project,
+          branch,
+          workflowIds: selectedWorkflows,
+          credentialIds: selectedCredentials,
+          commitMessage,
+          createMergeRequest: createMR
+        };
+        console.log('Submitting:', formData);
+        const totalItems = selectedWorkflows.length + selectedCredentials.length;
+        alert(`Submitting ${selectedWorkflows.length} workflows and ${selectedCredentials.length} credentials (${totalItems} total)\nProject: ${project}\nBranch: ${branch}\nCommit: ${commitMessage}`);
+      };
+
+      const getStatusColor = (status) => {
+        switch (status) {
+          case 'New': return '#10b981';
+          case 'Modified': return '#f59e0b';
+          case 'No update': return '#6b7280';
+          default: return '#ef4444';
+        }
+      };
+
+      const formatDate = (isoDate) => {
+        const date = new Date(isoDate);
+        return date.toLocaleDateString('en-GB', { 
+          day: '2-digit', 
+          month: '2-digit', 
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone: 'UTC'
+        }) + 'Z';
+      };
+
+      return (
+        <div style={{ display: 'flex', height: '100vh' }}>
+          {/* Left Sidebar */}
+          <div style={{
+            width: '240px',
+            background: '#fff',
+            borderRight: '1px solid #e5e7eb',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <div style={{ padding: '20px', borderBottom: '1px solid #e5e7eb' }}>
+              <h1 style={{ fontSize: '20px', fontWeight: '600', color: '#111' }}>Git Push</h1>
+            </div>
+            
+            <nav style={{ flex: 1, padding: '12px' }}>
+              <button
+                onClick={() => setActiveTab('workflows')}
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  marginBottom: '4px',
+                  border: 'none',
+                  background: activeTab === 'workflows' ? '#f3f4f6' : 'transparent',
+                  color: activeTab === 'workflows' ? '#ff6d5a' : '#666',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  transition: 'all 0.2s'
+                }}
+              >
+                📄 Workflows ({SAMPLE_DATA.workflows.length})
+              </button>
+              
+              <button
+                onClick={() => setActiveTab('credentials')}
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  marginBottom: '4px',
+                  border: 'none',
+                  background: activeTab === 'credentials' ? '#f3f4f6' : 'transparent',
+                  color: activeTab === 'credentials' ? '#ff6d5a' : '#666',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  transition: 'all 0.2s'
+                }}
+              >
+                🔑 Credentials ({SAMPLE_DATA.credentials.length})
+              </button>
+              
+              <button
+                onClick={() => setActiveTab('meta')}
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  border: 'none',
+                  background: activeTab === 'meta' ? '#f3f4f6' : 'transparent',
+                  color: activeTab === 'meta' ? '#ff6d5a' : '#666',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  transition: 'all 0.2s'
+                }}
+              >
+                ⚙️ Meta
+              </button>
+            </nav>
+          </div>
+
+          {/* Main Content */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Header with filters */}
+            <div style={{
+              background: '#fff',
+              borderBottom: '1px solid #e5e7eb',
+              padding: '20px 24px'
+            }}>
+              <div style={{ marginBottom: '16px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '4px' }}>
+                  {activeTab === 'workflows' ? 'Workflows' : activeTab === 'credentials' ? 'Credentials' : 'Meta Information'}
+                </h2>
+                <p style={{ fontSize: '14px', color: '#6b7280' }}>
+                  {activeTab === 'meta' ? 'Additional items that will be updated' : 'Select items to push to Git'}
+                </p>
+              </div>
+
+              {activeTab !== 'meta' && (
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                {/* Time Filter */}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <label style={{ fontSize: '13px', color: '#666', fontWeight: '500' }}>Updated:</label>
+                  <select
+                    value={timeFilter}
+                    onChange={(e) => setTimeFilter(e.target.value)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      background: '#fff',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="24hours">Last 24 hours</option>
+                    <option value="7days">Last 7 days</option>
+                    <option value="30days">Last 30 days</option>
+                    <option value="all">All</option>
+                  </select>
+                </div>
+
+                {/* Status Filter */}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <label style={{ fontSize: '13px', color: '#666', fontWeight: '500' }}>Status:</label>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    style={{
+                      padding: '6px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      background: '#fff',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="all">All</option>
+                    <option value="new">New only</option>
+                    <option value="modified">Modified only</option>
+                    <option value="unchanged">Unchanged only</option>
+                  </select>
+                </div>
+
+                {/* Select All */}
+                <button
+                  onClick={toggleAll}
+                  style={{
+                    padding: '6px 12px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    color: '#374151',
+                    fontWeight: '500',
+                    marginLeft: 'auto'
+                  }}
+                >
+                  {selectedItems.length === filteredItems.length && filteredItems.length > 0 ? 'Deselect All' : 'Select All'}
+                </button>
+              </div>
+              )}
+
+              {(selectedWorkflows.length > 0 || selectedCredentials.length > 0) && (
+                <div style={{
+                  marginTop: '12px',
+                  padding: '8px 12px',
+                  background: '#eff6ff',
+                  border: '1px solid #bfdbfe',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  color: '#1e40af'
+                }}>
+                  {selectedWorkflows.length > 0 && `${selectedWorkflows.length} workflow${selectedWorkflows.length !== 1 ? 's' : ''}`}
+                  {selectedWorkflows.length > 0 && selectedCredentials.length > 0 && ' and '}
+                  {selectedCredentials.length > 0 && `${selectedCredentials.length} credential${selectedCredentials.length !== 1 ? 's' : ''}`}
+                  {' selected'}
+                </div>
+              )}
+            </div>
+
+            {/* Items List */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '24px' }}>
+              {activeTab === 'meta' ? (
+                <div style={{
+                  background: '#fff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  padding: '24px'
+                }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: '#111' }}>
+                    Additional Items
+                  </h3>
+                  <p style={{ fontSize: '14px', color: '#6b7280', lineHeight: '1.6', marginBottom: '12px' }}>
+                    The following items will also be updated when you push to Git:
+                  </p>
+                  <ul style={{ 
+                    fontSize: '14px', 
+                    color: '#374151', 
+                    lineHeight: '1.8',
+                    paddingLeft: '20px',
+                    listStyle: 'disc'
+                  }}>
+                    <li>Folders</li>
+                    <li>Tags</li>
+                  </ul>
+                </div>
+              ) : filteredItems.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '48px 24px',
+                  color: '#9ca3af'
+                }}>
+                  <p style={{ fontSize: '14px' }}>No {activeTab} found with current filters</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {filteredItems.map(item => (
+                    <div
+                      key={item.id}
+                      style={{
+                        background: '#fff',
+                        border: selectedItems.includes(item.id) ? '1px solid #ff6d5a' : '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        padding: '16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '16px',
+                        transition: 'all 0.2s',
+                        cursor: 'pointer',
+                        ...(selectedItems.includes(item.id) && {
+                          background: '#fff5f4'
+                        })
+                      }}
+                      onClick={() => toggleItem(item.id)}
+                    >
+                      {/* Checkbox */}
+                      <div style={{ flexShrink: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedItems.includes(item.id)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            toggleItem(item.id);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            width: '18px',
+                            height: '18px',
+                            cursor: 'pointer',
+                            accentColor: '#ff6d5a'
+                          }}
+                        />
+                      </div>
+
+                      {/* Content */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          color: '#111',
+                          marginBottom: '4px',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {item.name}
+                        </div>
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#6b7280',
+                          display: 'flex',
+                          gap: '12px',
+                          alignItems: 'center'
+                        }}>
+                          <span>ID: {item.id}</span>
+                          <span>•</span>
+                          <span>Updated: {formatDate(item.updatedAt)}</span>
+                        </div>
+                      </div>
+
+                      {/* Status Badge */}
+                      <div style={{
+                        padding: '4px 12px',
+                        borderRadius: '12px',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        color: '#fff',
+                        background: getStatusColor(item.status),
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {item.status}
+                      </div>
+
+                      {/* Open Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          window.open(item.openUrl, '_blank');
+                        }}
+                        style={{
+                          padding: '8px 12px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          background: '#fff',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          color: '#374151',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseOver={(e) => e.currentTarget.style.background = '#f9fafb'}
+                        onMouseOut={(e) => e.currentTarget.style.background = '#fff'}
+                      >
+                        Open ↗
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer with form */}
+            {(selectedWorkflows.length > 0 || selectedCredentials.length > 0) && (
+              <div style={{
+                background: '#fff',
+                borderTop: '1px solid #e5e7eb',
+                padding: '20px 24px'
+              }}>
+                <form onSubmit={handleSubmit}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                    <div>
+                      <label style={{
+                        display: 'block',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: '#374151',
+                        marginBottom: '6px'
+                      }}>
+                        Project *
+                      </label>
+                      <select
+                        value={project}
+                        onChange={(e) => setProject(e.target.value)}
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          fontFamily: 'inherit',
+                          background: '#fff',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="n8n">n8n</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{
+                        display: 'block',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: '#374151',
+                        marginBottom: '6px'
+                      }}>
+                        Branch *
+                      </label>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <select
+                          value={branch}
+                          onChange={(e) => setBranch(e.target.value)}
+                          required
+                          style={{
+                            flex: 1,
+                            padding: '10px 12px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            fontFamily: 'inherit',
+                            background: '#fff',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <option value="dev">dev</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => window.open(`https://gitlab.com/${project}/-/tree/${branch}`, '_blank')}
+                          style={{
+                            padding: '10px 12px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            background: '#fff',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            color: '#374151',
+                            whiteSpace: 'nowrap'
+                          }}
+                          title="Open branch in GitLab"
+                        >
+                          ↗
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{
+                      display: 'block',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      color: '#374151',
+                      marginBottom: '6px'
+                    }}>
+                      Commit Message *
+                    </label>
+                    <input
+                      type="text"
+                      value={commitMessage}
+                      onChange={(e) => setCommitMessage(e.target.value)}
+                      placeholder="Updated workflows"
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        fontFamily: 'inherit'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      color: '#374151'
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={createMR}
+                        onChange={(e) => setCreateMR(e.target.checked)}
+                        style={{
+                          width: '16px',
+                          height: '16px',
+                          cursor: 'pointer',
+                          accentColor: '#ff6d5a'
+                        }}
+                      />
+                      Create Merge Request
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      background: '#ff6d5a',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#ff5542'}
+                    onMouseOut={(e) => e.currentTarget.style.background = '#ff6d5a'}
+                  >
+                    Push to Git ({selectedWorkflows.length + selectedCredentials.length} items)
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
